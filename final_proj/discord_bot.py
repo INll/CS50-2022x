@@ -8,34 +8,66 @@ TOKEN = os.getenv("TOKEN")
 client = discord.Client()   # create an instance of client, representing connection
                             # to the discord server
 
+try:
+    con = sqlite3.connect('user.db')
+    cur = con.cursor()   # create a cursor for the database
+    print("Successfully established connection to database {0}.".format('user.db'))
+except sqlite3.Error as error:
+    print("Error while establishing connection to sqlite.", error)
 
-sad_words = ["sad"]
-
-encourgement = ["It's okay!", "Hang in there!"]
-
-def create_connection(db_file):
-    con = None
-    try:
-        con = sqlite3.connect(db_file)
-        return con
-    except Error as error:
-        print(error)
-        
-    return con
-
-
+# Called by ;;init command
+# Should only execute once to create tables 
 def create_table(con, db_file):
-    cur = con.cursor() # create a cursor for the database
     
-    # Create database for storing information on Kin's channel
-    cur.execute('''CREATE TABLE IF NOT EXISTS upload_stats(
-                    last_upload text,
-                    link text, 
-                    days_inactive integer, 
-                    sub_count integer, 
-                    
+    # Format for time strings is YYYYMMDD HHMMSS
+    # Create table for users
+    cur.execute('''CREATE TABLE IF NOT EXISTS user(
+                    user_id INTEGER PRIMARY KEY,
+                    signup_date TEXT, 
+                    last_seen_days INTEGER,  
+                    pmdr_completed INTEGER,
+                    pmdr_initiated INTEGER,
+                    guild_role text,                    
+                    ))''')
+    
+    # Create table for to-do lists created by users
+    # User --> List --> To-do entry
+    cur.execute('''CREATE TABLE IF NOT EXISTS list(
+                    FOREIGN KEY(list_id) REFERENCES user(user_id),
+                    creation_date TEXT,
+                    ))''')
+    
+    # Create table for every to-do entry, by different users, in different lists
+    cur.execute('''CREATE TABLE IF NOT EXISTS todo(
+                    FOREIGN KEY(entry_id) REFERENCES list(list_id)
+                    due TEXT,
+                    content TEXT,
+                    reminder TEXT,
+                    is_done BOOLEAN,
+                    ))''')
+    
+    # Create table for every *active* breakout room, a.k.a channel
+    # Deactivated/abandoned rooms are automatically removed after some time
+    # Since details about a channel can be found in the audit log, 
+    # the function of this table is kept to a minimum
+    cur.execute('''CREATE TABLE IF NOT EXISTS room(
+                    FOREIGN KEY(owner_id) REFERENCES user(user_id),
+                    FOREIGN KEY(member_id) REFERENCES user(user_id),
+                    room_id TEXT PRIMARY KEY,                  
+                    ))''')
+    
+    # Create table for PD point balance for each server member
+    cur.execute('''CREATE TABLE IF NOT EXISTS balance(
+                    FOREIGN KEY(account_id) REFERENCES user(user_id),
+                    balance text,
                     ))''')
 
+    # Create table for recording all purchases made with PD points by a server member
+    cur.execute('''CREATE TABLE IF NOT EXISTS transaction_history(
+                    FOREIGN KEY(transaction_id) REFERENCES user(user_id),
+                    item text,
+                    amount text,
+                    ))''')
 
 # Request a quote from the zenquotes API through HTTP, enabled by requests package
 def get_quote():
