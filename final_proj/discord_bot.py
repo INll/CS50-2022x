@@ -1,4 +1,4 @@
-import os, dotenv, requests, json, discord, sqlite3
+import os, requests, json, discord, sqlite3
 from dotenv import load_dotenv
 from sqlite3 import Error
 
@@ -32,7 +32,7 @@ def create_table(con, db_file):
                     pmdr_completed INTEGER,
                     pmdr_initiated INTEGER,
                     guild_role TEXT
-                    )''')
+                    );''')
     
     # Create table for to-do lists created by users
     # User --> List --> To-do entry
@@ -41,8 +41,8 @@ def create_table(con, db_file):
                     owner_id PRIMARY KEY,
                     tracked TEXT,
                     creation_date TEXT,
-                    FOREIGN KEY(list_id) REFERENCES user(user_id),
-                    )''')
+                    FOREIGN KEY(list_id) REFERENCES user(user_id)
+                    );''')
     
     # Create table for every to-do entry, by different users, in different lists
     cur.execute('''CREATE TABLE IF NOT EXISTS todo(
@@ -52,7 +52,7 @@ def create_table(con, db_file):
                     reminder TEXT,
                     is_done BOOLEAN,
                     FOREIGN KEY(entry_id) REFERENCES list(list_id)
-                    )''')
+                    );''')
     
     # Create table for every *active* breakout room, a.k.a channel
     # Deactivated/abandoned rooms are automatically removed after some time
@@ -64,14 +64,14 @@ def create_table(con, db_file):
                     member_id NOT NULL,
                     FOREIGN KEY(owner_id) REFERENCES user(user_id),
                     FOREIGN KEY(member_id) REFERENCES user(user_id)
-                    )''')
+                    );''')
     
     # Create table for PD point balance for each server member
     cur.execute('''CREATE TABLE IF NOT EXISTS balance(
                     account_id NOT NULL,
                     balance TEXT,
-                    FOREIGN KEY(account_id) REFERENCES user(user_id),
-                    )''')
+                    FOREIGN KEY(account_id) REFERENCES user(user_id)
+                    );''')
 
     # Create table for recording all purchases made with PD points by a server member
     cur.execute('''CREATE TABLE IF NOT EXISTS transaction_history(
@@ -79,7 +79,7 @@ def create_table(con, db_file):
                     item TEXT,
                     amount TEXT,
                     FOREIGN KEY(transaction_id) REFERENCES balance(account_id)
-                    )''')
+                    );''')
     
     # Create table for storing information of all available store items
     cur.execute('''CREATE TABLE IF NOT EXISTS catalogue(
@@ -91,7 +91,7 @@ def create_table(con, db_file):
                     is_limited BOOLEAN,
                     is_available BOOLEAN,
                     discontinue_date TEXT CHECK(is_limited == 1)
-                    )''')
+                    );''')
 
 
 # Example code from code a Discord bot on YouTube 
