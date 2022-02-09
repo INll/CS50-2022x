@@ -1,0 +1,14 @@
+notes for discord_bot
+
+
+Example code from code a Discord bot on YouTube 
+
+Request a quote from the zenquotes API through HTTP, enabled by requests package
+def get_quote():
+    response = requests.get("https://zenquotes.io/api/random")
+    json_data = json.loads(response.text)   # convert quote in TEXTto .json
+    quote = json_data[0]["q"]   # format: single dict inside a list
+    quote = quote + " -" + json_data[0]["a"]
+    return(quote)
+
+End of example function
