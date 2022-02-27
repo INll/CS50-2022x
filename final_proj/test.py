@@ -1,15 +1,18 @@
-def todo(*argv):
-    x = len(argv)
-    for arg in argv:
-        print(arg)
-        
+import sqlite3
 
-testcmds = []
-testcmds.append("50, 10, 3, 30")
+con = sqlite3.connect('example.db')
+# Calling method cursor(), under class connect (assigned as con)
+# Method cursor() creates a cursor object, which is then assigned to cur
+cur = con.cursor()
 
-for i in range(len(testcmds)):
-    try:
-        todo(testcmds[i])
-        todo(50, 10, 3, 30)
-    except:
-        pass
+while(True):
+    query = input()
+    if query == 'exit':
+        break
+    else:
+        try:
+            # Calling the execute method of object cur
+            for row in cur.execute(query):
+                print(row)
+        except sqlite3.Error as er:
+            print(er)
