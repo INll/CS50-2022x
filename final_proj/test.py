@@ -1,18 +1,52 @@
-import sqlite3
+import math
+from fractions import Fraction
 
-con = sqlite3.connect('example.db')
-# Calling method cursor(), under class connect (assigned as con)
-# Method cursor() creates a cursor object, which is then assigned to cur
-cur = con.cursor()
+inHour = 81677/3600
+hh = math.trunc(inHour)
+mm = math.trunc((inHour - hh) * 60)
+ss = math.trunc((((inHour - hh) * 60) - mm) * 60)
 
-while(True):
-    query = input()
-    if query == 'exit':
-        break
-    else:
-        try:
-            # Calling the execute method of object cur
-            for row in cur.execute(query):
-                print(row)
-        except sqlite3.Error as er:
-            print(er)
+print(f"{hh}:{mm}:{ss}")
+
+
+# dictVal = {
+#     "1": 1,
+#     "2": 2,
+#     "3": 3
+# }
+
+# dictMain = {
+#     'one': dictVal,
+#     'two': dictVal,
+#     'three': dictVal
+# }
+
+# test = dictMain['three']
+# test2 = dictMain['three']['3']
+
+# print(type(dictMain))
+
+# if type(dictMain) is dict:
+#     print(dictMain)
+    
+    
+                    # for attempt in range(3):
+                    #     global keepLooping
+                    #     keepLooping = True
+                    #     try:
+                    #         for key, val in userNameToID.items():   # Dict, key is ID, val is username#0000
+                    #             if val == message.content:
+                    #                 followingID = key
+                    #                 keepLooping = False   # This is only False if a valid user is found!
+                    #                 break 
+                    #         if keepLooping == False:
+                    #             break
+                    #         raise KeyError   # If every key val is exhausted and no user is found
+                        
+                    #     except RuntimeError:   # If a new user just joined, new key val pair will be added
+                    #         time.sleep(1)      # to userNameToID causing dict size changed error
+                    #     except KeyError:
+                    #         await message.author.send(f"`{message.content}`: No such user. Please try again.")
+                    #         break
+                    # if keepLooping:
+                    #     print(f"`{caller} called ;;sub: Unknown error occurred. Conversion failed after 3 attempts.`")
