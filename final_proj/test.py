@@ -1,12 +1,13 @@
-import math
-from fractions import Fraction
+temp = 3 
 
-inHour = 81677/3600
-hh = math.trunc(inHour)
-mm = math.trunc((inHour - hh) * 60)
-ss = math.trunc((((inHour - hh) * 60) - mm) * 60)
+if temp == True:
+    print("hello world")
 
-print(f"{hh}:{mm}:{ss}")
+# pairs = [('cheese', 'queso'), ('red', 'rojo'), ('school', 'escuela')]
+
+# test = [tupleElement for tupleElement in pairs for item in tupleElement[:] if 'queso' in item]
+
+# print(test)
 
 
 # dictVal = {

@@ -19,7 +19,7 @@ bot = commands.Bot(command_prefix = ';;', intents=intents)
 # Some constants
 guildID = '699678814376034314'
 ToDoThreadActive = {}   # True if there a thread counting time since last todo
-
+taskNumber = 0
 
 # Text channel identifications
 ChannelIDs = {
@@ -29,11 +29,18 @@ ChannelIDs = {
 }
 
 # All DM contexts, used as value for each member key in DMStat
+# 'confimration' (-1, 2~N): For example, 5 means to confirm some action
+# in 'editToDo' context and will return when done
 DMContexts = {
     'following': False,
     'unfollowing': False,
-    'updateToDo': False
+    'updateToDo': False,
+    'editToDO': False,
+    'confirmation': -1,
 }
+# Idea for context is that bots will only respond to certain incoming DMs 
+# only when certain context is active for said user.
+
 
 # All the lists/dicts here are initialized after the bot is ready except for queryStat
 
@@ -62,6 +69,10 @@ ToDoBuffer = {}
 # Structure: {"695849842244583455": "Sillycon#0078"}
 userNameToID = {}
 
+# Store userID and a dict containing task num and corresponding task entry ID
+# The dict taskNumToEntryID inside is specific to a user and their ;;update runtime
+# Structure: [("695849842244583455", theMap)]
+taskNumtoEntryIDGlobal = []
 
 # Fill a dict with all members as keys and values as defaultValue
 def populateDict(dict, defaultValue):
@@ -130,25 +141,31 @@ def getID(username):
         return 2   # If for some reason the entire userNameToID{} was looped thrice and still no match
 
 # Toggle DM context and optionally verify channel
+# Used everywhere when there's a need to block and enable some DM commands from a user
 # Invoked when a DM session is to be opened for taking further commands
-# Fourth argument: 0 toggles OFF; 1 toggles ON
 def toggleDM(userID, context, onOff, channelID=NULL, validChannels=NULL):
     if (channelID != NULL) or (validChannels != NULL):   # Channel verification 
         if checkChannelValidity(channelID, validChannels):
             return False   # False if channel is NOT VALID
     contextName = str(context)
-    if onOff == 1:
+    if onOff > 1:
         # Toggle every other context off
         for k, v in DMStat[userID].items():
             if v == True:
                 DMStat[userID][k] = False
+                continue
+            elif v > 0:
+                DMStat[userID][k] = -1  # Reset 'confirmation'
         try:
             _ = DMStat[userID][contextName]
         # When a context is new
         except KeyError:
             pass   # Doesn't matter since next line adds a new context regardless
-        DMStat[userID][contextName] = True  # Toggle on context
-    else:
+        if onOff == 1:
+            DMStat[userID][contextName] = True  # Toggle on context
+        else:  # Allow even more sub-contexts
+            DMStat[userID][contextName] = onOff
+    elif onOff == 0:
         DMStat[userID][contextName] = False
     return True
 
@@ -160,7 +177,7 @@ def convertSecTohhmm(value):
     hh = math.trunc(inHour)
     mm = math.trunc((inHour - hh) * 60)
     ss = math.trunc((((inHour - hh) * 60) - mm) * 60)
-    return f"{hh}:{mm}:{ss}"
+    return f"{hh:02d}:{mm:02d}:{ss:02d}"
 
 # Compare currentTime with input and return True if some condition is met
 # Used mainly in checking if a certain amount of time has passed since someone
@@ -395,7 +412,7 @@ class Administration(commands.Cog):
                 # Unsub from a user
                 if message.content[:6] == ';unsub' and message.content[:9] != ';unsuball':
                     if len(message.content) < 7:
-                        await message.author.send(f"Error: Missing `username#0000`. Please try again.")
+                        await message.author.send("Error: Missing `username#0000`. Please try again.")
                         isCommand = True
                         return
                     unsubID = str(getID(message.content[7:]))
@@ -468,6 +485,108 @@ class Administration(commands.Cog):
             if DMStat[message.author.id].get('updateToDo'):
                 caller = message.author.display_name   # Caller memberID in string
                 isCommand = False
+                global taskNumber
+                
+                try:            
+                    con = sqlite3.connect(dbPath)
+                    cur = con.cursor()
+                except sqlite3.Error as er:
+                    await message.author.send('Connection to `{}` failed.'.format(dbPath[1:]))
+
+                # Copy task num map from global list    
+                # [0]: Because this is a list with the dict being the only element
+                map = [tuple[1] for tuple in taskNumtoEntryIDGlobal if message.author.id == tuple[0]][0]
+                
+                # Exit context
+                if message.content == ';nvm':
+                    DMStat[message.author.id]['updateToDo'] = False
+                    isCommand = True
+                    return
+                
+                # See all active todos  --  ** Refractoring needed, this is mostly a dup of update() **
+                if message.content == ';list':
+                    cur.execute("SELECT entry_id, content, creation_time FROM todo WHERE creator_id = ? AND todo_status = ?", 
+                                (str(message.author.id), 0))
+                    results = cur.fetchall()
+                    todo = ""
+                    # Loop through each todo and its creation time
+                    taskNum = 1
+                    taskNumToEntryID = {}  # Map task num to task entry IDs, for ;done
+                    for entry_id, content, creationTime in results:
+                        if creationTime == None:   #DEBUG
+                            continue   # DEBUG
+                        remainingTime = (float(creationTime) + 86400) - time.time()   # 86400 secs = 1 day
+                        convertedTime = convertSecTohhmm(remainingTime)
+                        if convertedTime == NULL:
+                            continue   # Invalid remainingTime
+                        currTask = f"{taskNum}) " + content + f"  --  ({convertedTime})\n"
+                        taskNumToEntryID[taskNum] = entry_id
+                        todo += currTask
+                        taskNum += 1
+                    await message.author.send(f"```\n{todo}\n```")
+
+                # Complete a todo
+                if message.content[:5] == ';done':
+                    if len(message.content) < 6:
+                        await message.author.send("Error: Missing `taskNumber`. Please try again.")
+                        isCommand = True
+                        return
+                    try:
+                        taskNumber = int(message.content[6:])
+                        # If tasknumber is invalid or does not map to a todo
+                        if taskNumber < 0 or map.get(taskNumber) == None:
+                            raise ValueError
+                        # Change todo status from 0 to 1
+                        cur.execute("UPDATE todo SET todo_status = 1 WHERE entry_id = ?",
+                                    (map.get(taskNumber), ))
+                        con.commit()
+                        await message.author.send("Update successful.")
+                    except:
+                        await message.author.send("Error: Invalid `taskNumber`. Please try again.")
+                        isCommand = True
+                        return
+
+                # Exit 'updateToDo' and enter 'editToDo'
+                if message.content[:5] == ';edit':
+                    if len(message.content) < 6:
+                        await message.author.send("Error: Missing `taskNumber`. Please try again.")
+                        isCommand = True
+                        return
+                    try:
+                        taskNumber = int(message.content[6:])
+                        if taskNumber < 0 or map.get(taskNumber) == None:
+                            raise ValueError
+                        await message.author.send("Editing mode active. Type the new todo and hit `Enter` to save it. Or type `;nvm` to go back to `;;update` mode.")
+                        toggleDM(message.author.id, 'editToDo', 1)
+                        return
+                    except:
+                        await message.author.send("Error: Invalid `taskNumber`. Please try again.")
+                        isCommand = True
+                        return
+                    
+                # Exit 'updateToDo' and enter 'confirmation - 5'
+                if message.content[:5] == ';edit':
+                    if len(message.content) < 6:
+                        await message.author.send("Error: Missing `taskNumber`. Please try again.")
+                        isCommand = True
+                        return
+                    try:
+                        taskNumber = int(message.content[6:])
+                        if taskNumber < 0 or map.get(taskNumber) == None:
+                            raise ValueError
+                        await message.author.send(f"Are you sure you want to delete task number `{taskNumber}`? This action is irreversible!")
+                        toggleDM(message.author.id, 'confirmation', 5)
+                        return
+                    except:
+                        await message.author.send("Error: Invalid `taskNumber`. Please try again.")
+                        isCommand = True
+                        return
+
+            # 'editToDo' context  --  Only togglable by 'updateToDo'
+            if DMStat[message.author.id].get('editToDo'):
+                
+                # Copy task num map from global list
+                map = [tuple[1] for tuple in taskNumtoEntryIDGlobal if message.author.id == tuple[0]][0]
                 
                 try:            
                     con = sqlite3.connect(dbPath)
@@ -475,18 +594,24 @@ class Administration(commands.Cog):
                 except sqlite3.Error as er:
                     await message.author.send('Connection to `{}` failed.'.format(dbPath[1:]))
                     
-                # Exit context
+                # Return to 'updateToDo' context
                 if message.content == ';nvm':
-                    DMStat[message.author.id]['updateToDo'] = False
-                    isCommand = True
+                    await message.author.send("Returning to `;;update` mode...")
+                    toggleDM(message.author.id, 'updateToDo', 1)
                     return
+                
+                # Take user input then update todo
+                try:
+                    cur.execute("UPDATE todo SET content = ? WHERE entry_id = ? AND todo_status = 0",
+                                (message.content, map.get(taskNumber)))
+                    con.commit()
+                    await message.author.send("Task has been successfully updated. Returning to `;;update`.")
+                    toggleDM(message.author.id, 'updateToDo', 1)
+                    return
+                except sqlite3.Error as er:
+                    await message.author.send(f"Error encountered.\n{er}")
                     
-                # Complete a todo
-                if message.content == ';done':
-                    pass
-                
-                
-    
+                    
     # Refresh existing user statistics
     @commands.command(description="Verify and update user statistics")
     async def refresh(self, ctx, target = None):
@@ -572,7 +697,7 @@ class ToDo(commands.Cog):
     async def update(self, ctx):
         validChannels = [ChannelIDs['todo']]
         if toggleDM(ctx.author.id, 'updateToDo', 1, ctx.channel.id, validChannels):
-            cmd = ''';done     <item>         |  Complete a todo and notify followers.\n;edit     <item>         |  Edit todo content.\n;delete   <item>         |  Delete a todo and notify followers.'''
+            cmd = ''';done     <itemNumber>   |  Complete a todo and notify followers.\n;edit     <itemNumber>   |  Edit todo content.\n;delete   <itemNumber>   |  Delete a todo and notify followers.\n;list                    |  List all active todo items.\n'''
             await ctx.author.send(f"Here you can edit, delete or complete a todo item. Type `;nvm` to quit, or try the following commands:```\n{cmd}\n```")
             
             # Return a list of todos with remaining time displayed in hh:mm:ss
@@ -581,22 +706,32 @@ class ToDo(commands.Cog):
                 cur = con.cursor()
             except sqlite3.Error as er:
                 print('Connection to `{}` failed.'.format(dbPath[1:]))
-            cur.execute("SELECT content, creation_time FROM todo WHERE creator_id = ?", 
-                        (str(ctx.author.id), ))
+                print(er)
+            cur.execute("SELECT entry_id, content, creation_time FROM todo WHERE creator_id = ? AND todo_status = ?", 
+                        (str(ctx.author.id), 0))
             results = cur.fetchall()
             todo = ""
-            
             # Loop through each todo and its creation time
-            for content, creationTime in results:
+            taskNum = 0
+            taskNumToEntryID = {}  # Map task num to task entry IDs, for ;done
+            for entry_id, content, creationTime in results:
                 if creationTime == None:   #DEBUG
                     continue   # DEBUG
-                remainingTime = (float(creationTime) + 86400) - time.time()
+                remainingTime = (float(creationTime) + 86400) - time.time()   # 86400 secs = 1 day
                 convertedTime = convertSecTohhmm(remainingTime)
                 if convertedTime == NULL:
                     continue   # Invalid remainingTime
-                currTask = content + f"  ({convertedTime})\n"
+                taskNum += 1
+                currTask = f"{taskNum}) " + content + f"  --  ({convertedTime})\n"
+                taskNumToEntryID[taskNum] = entry_id
                 todo += currTask
+            if taskNum == 0:   # If there is no active todo
+                await ctx.author.send("```\nYou haven't added any todos. Add some and get productive!\n```")
+                toggleDM(ctx.author.id, 'updateToDo', 0)
+                return
             await ctx.author.send(f"See below for all currently active items with remaining time in (`hh:mm:ss`):```\n{todo}\n```")
+            taskNumtoEntryIDGlobal.append((ctx.author.id, taskNumToEntryID))  # Global list referred by ;done
+            
     
     # Executed every 0.1 second to check if some buffering ToDos are ready to be DM'd
     @tasks.loop(seconds=0.1)
