@@ -18,7 +18,6 @@ bot = commands.Bot(command_prefix = ';;', intents=intents)
 
 # Some constants
 guildID = '699678814376034314'
-ToDoThreadActive = {}   # True if there a thread counting time since last todo
 taskNumber = 0
 
 # Text channel identifications
@@ -60,7 +59,7 @@ queryStat = {}
 # Only when this is True that commands related to following an user can be invoked
 DMStat = {}
 
-# Store todo items awaiting being DM'd to followers
+# Store todo items to be DM'd to followers
 # Structure: {"ownerID": {"todoContent": "creationTime", "todo2": "time2"}}
 # Once notifications have been sent value of ownerID is cleared
 ToDoBuffer = {}
@@ -74,6 +73,11 @@ userNameToID = {}
 # Structure: [("695849842244583455", theMap)]
 taskNumtoEntryIDGlobal = []
 
+# Store completed todo items awaitng to be DM'd to followers
+# Sturcture: [[ownerID, [[ToDoName1, time 1], [ToDoName2, time2]]]]
+completedToDoBuffer = []
+# Need for checking cTDB depends on the existence of a list element
+
 # Fill a dict with all members as keys and values as defaultValue
 def populateDict(dict, defaultValue):
     for guild in bot.guilds:
@@ -84,6 +88,15 @@ def populateDict(dict, defaultValue):
                     dict[member.id] = dictTemp
                     continue
                 dict[member.id] = defaultValue
+                
+# Fill a list with lists consisting memberIDs and some properties
+# For example, to fill completedToDoBuffer, property is [[ToDoName1, time 1], [ToDoName2, time2]]
+# So the resultant *element* of the list is [memberID, [[ToDoName1, time 1], [ToDoName2, time2]]]
+def populateList(list, property):
+    for guild in bot.guilds:
+        if guild.id == int(guildID):
+            for member in guild.members:
+                list.append([member.id, copy.deepcopy(property)])
 
 # Check if it's me the owner
 def check_if_its_me(ctx):
@@ -148,7 +161,7 @@ def toggleDM(userID, context, onOff, channelID=NULL, validChannels=NULL):
         if checkChannelValidity(channelID, validChannels):
             return False   # False if channel is NOT VALID
     contextName = str(context)
-    if onOff > 1:
+    if onOff >= 1:
         # Toggle every other context off
         for k, v in DMStat[userID].items():
             if v == True:
@@ -179,59 +192,9 @@ def convertSecTohhmm(value):
     ss = math.trunc((((inHour - hh) * 60) - mm) * 60)
     return f"{hh:02d}:{mm:02d}:{ss:02d}"
 
-# Compare currentTime with input and return True if some condition is met
-# Used mainly in checking if a certain amount of time has passed since someone
-# last made a todo item
-async def compareTime(difference):
-    endThread = False
-    global ToDoThreadActive, ToDoBuffer, ToDoBufferingCheckList
-    
-    # In ToDoBufferingCheckList members who published todos recently are set to True
-    for attempt in range(5):   # 5 attempts for runtimeError
-        try:
-            while True in list(ToDoBufferingCheckList.values()):
-                # Get all items in the form of (ID, status)
-                for pos, (authorID, publishStatus) in enumerate(ToDoBufferingCheckList.items()):
-                    if publishStatus:
-                        author = str(authorID)
-                        # Check if ToDoBuffer has todo items, since new todos might be added or
-                        # deleted as a result of expired buffering todos
-                        # If there is none this author can be safely skipped
-                        if ToDoBuffer.get(author) != None:
-                            try:   # Get creation time of latest todo item
-                                lastToDoTime = next(reversed(ToDoBuffer[author].values()))
-                                diff = time.time() - float(lastToDoTime)  # Compare to current time
-                                if diff > difference:
-                                    print(f"It has been {difference} seconds since last todo.")
-                                    notificationResult = await notifyFollowers(author)
-                                    if notificationResult == 1:
-                                        raise RuntimeError
-                                    ToDoBuffer[author].clear()
-                            except StopIteration as e:
-                                ToDoBufferingCheckList[authorID] = False
-                                print(e)
-                            continue   # Check next author since current todos haven't expired
-                        
-                        # If no buffering todos left this author is not checked next time
-                        elif ToDoBuffer.get(author) == None:
-                            ToDoBufferingCheckList[authorID] = False
-
-                    continue   # Next author
-            # Terminate thread 
-            ToDoThreadActive = False
-            endThread = True
-            break
-        except RuntimeError:   # Caused by new user joining -> Dict size changed during iteration
-            time.sleep(1)      # Otherwise there might be a problem with database connection (see notifyFollowers())
-        if endThread:   # Confirm thread termination
-            break
-        
-    if not endThread:
-        print("`compareTime()`: RuntimeError encountered after 5 attempts.")
-        ToDoThreadActive = False
-
 # DM followers about an update on todo items from following users
-async def notifyFollowers(author):
+# DM content varies with the provided application code
+async def notifyFollowers(author, application):
     try:            
         con = sqlite3.connect(dbPath)
         cur = con.cursor()
@@ -247,10 +210,17 @@ async def notifyFollowers(author):
             follower = bot.get_user(int(er))
             followed = bot.get_user(int(ed))
             followedName = followed.display_name
-            for k, v in ToDoBuffer[author].items():
-                currToDo = f"{k}\n"
-                ToDos += currToDo
-            await follower.send(f"`{followedName}` has started working on the following:\n```\n{ToDos}\n```")
+            if application == 0:  # ToDo creation
+                for k, v in ToDoBuffer[author].items():
+                    currToDo = f"{k}\n"
+                    ToDos += currToDo
+                await follower.send(f"`{followedName}` has started working on the following:\n```\n{ToDos}\n```")
+            elif application == 1:   # ToDo completion
+                for completedToDoEntryID in [e[1] for e in completedToDoBuffer if e[0] == author]:
+                    currToDoName = completedToDoEntryID[0]   # ToDoName1, 2, etc
+                    currToDo = f"{currToDoName}\n"
+                    ToDos += currToDo
+                await follower.send(f"`{followedName}` has completed the following todo(s)!\n```\n{ToDos}\n```")                    
         except Exception as e:
             print(e)
         return 0
@@ -264,6 +234,7 @@ async def on_ready():
     global DMStat, ToDoBufferingCheckList, DMContexts
     populateDict(DMStat, DMContexts)
     populateDict(ToDoBufferingCheckList, False)
+    populateList(completedToDoBuffer, [])
     
     # Populate userNameToID
     for guild in bot.guilds:
@@ -484,7 +455,6 @@ class Administration(commands.Cog):
             # 'updateToDo' context
             if DMStat[message.author.id].get('updateToDo'):
                 caller = message.author.display_name   # Caller memberID in string
-                isCommand = False
                 global taskNumber
                 
                 try:            
@@ -500,7 +470,6 @@ class Administration(commands.Cog):
                 # Exit context
                 if message.content == ';nvm':
                     DMStat[message.author.id]['updateToDo'] = False
-                    isCommand = True
                     return
                 
                 # See all active todos  --  ** Refractoring needed, this is mostly a dup of update() **
@@ -510,7 +479,7 @@ class Administration(commands.Cog):
                     results = cur.fetchall()
                     todo = ""
                     # Loop through each todo and its creation time
-                    taskNum = 1
+                    taskNum = 0
                     taskNumToEntryID = {}  # Map task num to task entry IDs, for ;done
                     for entry_id, content, creationTime in results:
                         if creationTime == None:   #DEBUG
@@ -519,38 +488,57 @@ class Administration(commands.Cog):
                         convertedTime = convertSecTohhmm(remainingTime)
                         if convertedTime == NULL:
                             continue   # Invalid remainingTime
+                        taskNum += 1
                         currTask = f"{taskNum}) " + content + f"  --  ({convertedTime})\n"
                         taskNumToEntryID[taskNum] = entry_id
                         todo += currTask
-                        taskNum += 1
+                    if taskNum == 0:
+                        await message.author.send("```\nNice! Your schedule is clear for today.\n```")
                     await message.author.send(f"```\n{todo}\n```")
 
-                # Complete a todo
+                # Complete a todo and notify followers after a period of cooldown
                 if message.content[:5] == ';done':
                     if len(message.content) < 6:
                         await message.author.send("Error: Missing `taskNumber`. Please try again.")
-                        isCommand = True
                         return
                     try:
                         taskNumber = int(message.content[6:])
                         # If tasknumber is invalid or does not map to a todo
                         if taskNumber < 0 or map.get(taskNumber) == None:
                             raise ValueError
-                        # Change todo status from 0 to 1
-                        cur.execute("UPDATE todo SET todo_status = 1 WHERE entry_id = ?",
-                                    (map.get(taskNumber), ))
-                        con.commit()
-                        await message.author.send("Update successful.")
                     except:
                         await message.author.send("Error: Invalid `taskNumber`. Please try again.")
-                        isCommand = True
                         return
-
+                    
+                    # Change todo status from 0 to 1
+                    cur.execute("UPDATE todo SET todo_status = 1 WHERE entry_id = ?",
+                                (map.get(taskNumber), ))
+                    con.commit()
+                    completionTime = time.time()
+                    await message.author.send("Update successful.")
+                    
+                    # Get name of completed todo
+                    cur.execute("SELECT content FROM todo WHERE entry_id = ?",
+                                (map.get(taskNumber), ))
+                    completedToDoContent = cur.fetchone()
+                    
+                    # Add completed todo to completedToDoBuffer
+                    authorID = message.author.id
+                    try:   # e: [authorID, [[ToDoName1, time 1], [ToDoName2, time2]]]
+                        e = [e for e in completedToDoBuffer if e[0] == authorID][0]
+                        index = completedToDoBuffer.index(e)
+                        completedToDoBuffer[index][1].append([completedToDoContent, completionTime])
+                    except IndexError:   # Create list if none found
+                        completedToDoBuffer.append([authorID, [[completedToDoContent, completionTime]]])
+                    
+                    # Invoke a looping event that checks for ctodo notification expiry
+                    expiryTime = 3   # In seconds, default: 60
+                    self.compareCompletedTime.start(expiryTime)
+                    
                 # Exit 'updateToDo' and enter 'editToDo'
                 if message.content[:5] == ';edit':
                     if len(message.content) < 6:
                         await message.author.send("Error: Missing `taskNumber`. Please try again.")
-                        isCommand = True
                         return
                     try:
                         taskNumber = int(message.content[6:])
@@ -561,25 +549,22 @@ class Administration(commands.Cog):
                         return
                     except:
                         await message.author.send("Error: Invalid `taskNumber`. Please try again.")
-                        isCommand = True
                         return
                     
                 # Exit 'updateToDo' and enter 'confirmation - 5'
-                if message.content[:5] == ';edit':
-                    if len(message.content) < 6:
+                if message.content[:7] == ';delete':
+                    if len(message.content) < 8:
                         await message.author.send("Error: Missing `taskNumber`. Please try again.")
-                        isCommand = True
                         return
                     try:
-                        taskNumber = int(message.content[6:])
+                        taskNumber = int(message.content[8:])
                         if taskNumber < 0 or map.get(taskNumber) == None:
                             raise ValueError
-                        await message.author.send(f"Are you sure you want to delete task number `{taskNumber}`? This action is irreversible!")
+                        await message.author.send(f"Are you sure you want to delete task number `{taskNumber}`? This action is **irreversible**! (**y**/**n**)")
                         toggleDM(message.author.id, 'confirmation', 5)
                         return
                     except:
                         await message.author.send("Error: Invalid `taskNumber`. Please try again.")
-                        isCommand = True
                         return
 
             # 'editToDo' context  --  Only togglable by 'updateToDo'
@@ -593,10 +578,11 @@ class Administration(commands.Cog):
                     cur = con.cursor()
                 except sqlite3.Error as er:
                     await message.author.send('Connection to `{}` failed.'.format(dbPath[1:]))
+                    return
                     
                 # Return to 'updateToDo' context
                 if message.content == ';nvm':
-                    await message.author.send("Returning to `;;update` mode...")
+                    await message.author.send("Returning to `;;update` mode.")
                     toggleDM(message.author.id, 'updateToDo', 1)
                     return
                 
@@ -611,7 +597,47 @@ class Administration(commands.Cog):
                 except sqlite3.Error as er:
                     await message.author.send(f"Error encountered.\n{er}")
                     
+            # 'confirmation' context
+            if DMStat[message.author.id].get('confirmation') != -1:
+                
+                # Check for todo deletion scenario
+                if DMStat[message.author.id].get('confirmation') == 5:
+
+                    # Copy task num map from global list
+                    map = [tuple[1] for tuple in taskNumtoEntryIDGlobal if message.author.id == tuple[0]][0]
                     
+                    try:            
+                        con = sqlite3.connect(dbPath)
+                        cur = con.cursor()
+                    except sqlite3.Error as er:
+                        await message.author.send('Connection to `{}` failed.'.format(dbPath[1:]))
+                    
+                    # Confirm deletion
+                    if message.content == 'y':
+                        try:
+                            cur.execute("DELETE FROM todo WHERE entry_id = ?", (map.get(taskNumber), ))
+                            con.commit()
+                            await message.author.send("Task deletion successful. Returning to `;;update`.")
+                            toggleDM(message.author.id, 'updateToDo', 1)
+                            return
+                        except sqlite3.Error as er:
+                            await message.author.send("Error encountered.")
+                            print(er)
+                            return
+                    
+                    # Cancel deletion
+                    if message.content == 'n':
+                        await message.author.send("Returning to `;;update`.")
+                        toggleDM(message.author.id, 'updateToDo', 1)
+                        return
+                    
+                    # Wrong input
+                    else:
+                        await message.author.send("Invalid input. Returning to `;;update`.")
+                        toggleDM(message.author.id, 'updateToDo', 1)
+                        return
+
+            
     # Refresh existing user statistics
     @commands.command(description="Verify and update user statistics")
     async def refresh(self, ctx, target = None):
@@ -685,11 +711,11 @@ class ToDo(commands.Cog):
         ToDoBuffer[f"{author}"][f"{todo}"] = f"{currTime}"
         
         # Toggle author to True so published todos are looped to compare time
-        global ToDoThreadActive, ToDoBufferingCheckList
+        global ToDoBufferingCheckList
         ToDoBufferingCheckList[author] = True            
         
         # Invoke a looping background task that checks for todo notification expiry
-        expiryTime = 3
+        expiryTime = 3   # In seconds, default: 600
         self.compareTime.start(expiryTime)
         
     # Manage todos
@@ -697,7 +723,7 @@ class ToDo(commands.Cog):
     async def update(self, ctx):
         validChannels = [ChannelIDs['todo']]
         if toggleDM(ctx.author.id, 'updateToDo', 1, ctx.channel.id, validChannels):
-            cmd = ''';done     <itemNumber>   |  Complete a todo and notify followers.\n;edit     <itemNumber>   |  Edit todo content.\n;delete   <itemNumber>   |  Delete a todo and notify followers.\n;list                    |  List all active todo items.\n'''
+            cmd = ''';done     <itemNumber>   |  Complete a todo and notify followers.\n;edit     <itemNumber>   |  Edit todo content.\n;delete   <itemNumber>   |  Delete a todo.\n;list                    |  List all active todo items.\n'''
             await ctx.author.send(f"Here you can edit, delete or complete a todo item. Type `;nvm` to quit, or try the following commands:```\n{cmd}\n```")
             
             # Return a list of todos with remaining time displayed in hh:mm:ss
@@ -711,9 +737,9 @@ class ToDo(commands.Cog):
                         (str(ctx.author.id), 0))
             results = cur.fetchall()
             todo = ""
-            # Loop through each todo and its creation time
             taskNum = 0
             taskNumToEntryID = {}  # Map task num to task entry IDs, for ;done
+            # Loop through each todo and its creation time
             for entry_id, content, creationTime in results:
                 if creationTime == None:   #DEBUG
                     continue   # DEBUG
@@ -730,14 +756,18 @@ class ToDo(commands.Cog):
                 toggleDM(ctx.author.id, 'updateToDo', 0)
                 return
             await ctx.author.send(f"See below for all currently active items with remaining time in (`hh:mm:ss`):```\n{todo}\n```")
+            # Update outdated taskNumToEntryID
+            try:
+                taskNumtoEntryIDGlobal.remove([tuple for tuple in taskNumtoEntryIDGlobal if tuple[0] == ctx.author.id][0])
+            except IndexError:
+                pass   # taskNumToEntryID was empty
             taskNumtoEntryIDGlobal.append((ctx.author.id, taskNumToEntryID))  # Global list referred by ;done
             
-    
-    # Executed every 0.1 second to check if some buffering ToDos are ready to be DM'd
-    @tasks.loop(seconds=0.1)
+    # This is for buffering todos
+    # Executed every 1 second to check if some buffering ToDos are ready to be DM'd
+    @tasks.loop(seconds = 1)
     async def compareTime(self, difference):
-        global endTask
-        endTask = False
+        endLoop = False
         global ToDoBuffer, ToDoBufferingCheckList
         
         # In ToDoBufferingCheckList members who published todos recently are set to True
@@ -756,7 +786,7 @@ class ToDo(commands.Cog):
                                 diff = time.time() - float(lastToDoTime)  # Compare to current time
                                 if diff > difference:
                                     print(f"It has been {difference} seconds since last todo.")
-                                    notificationResult = await notifyFollowers(author)
+                                    notificationResult = await notifyFollowers(author, 0)
                                     if notificationResult == 1:
                                         raise RuntimeError
                                     ToDoBuffer[author].clear()
@@ -770,19 +800,48 @@ class ToDo(commands.Cog):
 
                     continue   # Next author
                 # Terminate task early if the entire checklist has been looped
-                endTask = True
+                endLoop = True
                 
             except RuntimeError:   # Caused by new user joining -> Dict size changed during iteration
                 time.sleep(1)      # Otherwise there might be a problem with database connection (see notifyFollowers())
-            if endTask:
+            if endLoop:
                 break
-        if endTask:
+        if endLoop:
             return
         else:
             # If there is still a problem with looping the for loop    
             print("`compareTime()`: RuntimeError encountered after 3 attempts.")
             return
 
+    # Looping to check every list element in completedToDoBuffer and see if the last
+    # element of taskNum has expired the cToDo notification time limit
+    @tasks.loop(seconds = 1)
+    async def compareCompletedTime(self, difference):
+        endLoop = False
+        global completedToDoBuffer
+        
+        # Loop through every [authorID, [[ToDoName1, time 1], [ToDoName2, time2]]]
+        # Someone who hasn't completed recently won't have an entry here
+        for element in completedToDoBuffer:
+            latestCompletionTime = element[1][-1][1]
+            authorID = element[0]
+            diff = time.time() - float(latestCompletionTime)
+            if diff > difference:
+                print(f"It has been {difference} seconds since last completion.")
+                for _ in range(3):
+                    try:
+                        notificationResult = await notifyFollowers(authorID, 1)
+                        if notificationResult == 1:
+                            raise RuntimeError
+                    except RuntimeError as er:
+                        print(er)
+                        continue
+                    completedToDoBuffer.remove(element)
+                    break   # Check next element
+            else:
+                continue   # Check next element
+                
+            
     # Follow an user
     @commands.command(description="Follow an user")
     async def sub(self, ctx):
@@ -797,14 +856,6 @@ class ToDo(commands.Cog):
 bot.add_cog(Administration(bot))
 bot.add_cog(ToDo(bot))
 
-# @commands.command(description="Configure pomodoro work and break session")
-# try:
-#     async def doro(ctx, *args):
-        
-    
-# except:
-    
-# Create connection to a database file stored locally
 try:
     con = sqlite3.connect(dbPath)
     cur = con.cursor()   # create a cursor for the database

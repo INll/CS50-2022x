@@ -1,7 +1,23 @@
-temp = 3 
+l = [[1, [1, 2, 3, 4]], [2, [1, 3, 4], [3, [1, 4]]]]
 
-if temp == True:
-    print("hello world")
+k = []
+
+for _ in range(5):
+    for e in k:
+        if len(k) == 0:
+            continue
+        print(e)
+    time.sleep(1)
+
+# try:
+#     test = [t for t in l if t[0] == 2][0]
+# except IndexError:
+#     print("No list starts with said number3")
+# print(test)
+
+# l.remove(tupleStartsWith125)
+
+# print(l)
 
 # pairs = [('cheese', 'queso'), ('red', 'rojo'), ('school', 'escuela')]
 
