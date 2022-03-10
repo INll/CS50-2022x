@@ -1,13 +1,9 @@
 l = [[1, [1, 2, 3, 4]], [2, [1, 3, 4], [3, [1, 4]]]]
 
-k = []
+test = []
 
-for _ in range(5):
-    for e in k:
-        if len(k) == 0:
-            continue
-        print(e)
-    time.sleep(1)
+print(len(test))
+
 
 # try:
 #     test = [t for t in l if t[0] == 2][0]
