@@ -1,1 +1,1 @@
-This repository contains everything for the CS50 course. That's it.
+![video demo](https://www.youtube.com/watch?v=l0Fh7U9Qvv4)
